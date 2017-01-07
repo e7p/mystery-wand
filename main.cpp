@@ -237,7 +237,7 @@ uint8_t player_xpos;
 #define FLAG_COUNT_FRAMES 1
 #define FLAG_WAIT_BUTTONUP 2
 uint8_t flags = 0;
-uint8_t player_jump = 0, player_extra_y;
+uint8_t player_jump = 0, player_extra_y, player_y = 96-16;
 
 int main() {
 	sound_init();
@@ -264,14 +264,25 @@ int main() {
 			flags &= ~FLAG_WAIT_BUTTONUP;
 		}
 		if(player_jump > 4) {
+			//TODO: modify the jumping routine in a way that only the upwards part of the jump is relevant.
+			// the downwards part would be same as "falling" then, so the "falling routing" should take care of
 			player_extra_y = jump[9-player_jump];
+			// if collision (on head), set player_jump to 9(?)-player_jump and player_extra_y accordingly. else:
 			player_jump--;
 		} else if(player_jump > 0) {
 			player_extra_y = jump[player_jump];
+			if(0) { // if collision on bottom (inside a block...) set player_y accordingly and stop falling
+				player_jump = 0;
+				player_y = player_y - player_extra_y;
+			}
 			player_jump--;
 		} else {
 			player_extra_y = 0;
 		}
+		// check whether there is a solid tile under the character... if not, player has to fall and can not jump while this
+		// if there is a collision with an enemy
+			// check whether the enemy is right under the character. if so, then hurt the enemy and let the player jump maybe
+			// else hurt the player
 		draw_bg(level_scroll_x);
 		if(row_counter < sizeof(level_tiles)/12-16) {
 			scroll_level(1);
@@ -282,7 +293,7 @@ int main() {
 			flags &= ~FLAG_COUNT_FRAMES;
 			frame_counter = 0;
 		}
-		draw_object(wizard, wizard_mask, sizeof(wizard)/16, player_xpos, 96-16-16-player_extra_y, 1, 2);
+		draw_object(wizard, wizard_mask, sizeof(wizard)/16, player_xpos, player_y-16-player_extra_y, 1, 2);
 		if(flags & FLAG_COUNT_FRAMES) {
 			frame_counter++;
 		}
