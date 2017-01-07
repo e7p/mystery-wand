@@ -2,7 +2,6 @@
 //#include <font4x6.h>
 #include <avr/pgmspace.h>
 #include "sound.h"
-#include <util/delay.h>
 
 const uint8_t PROGMEM bootlogo[] = {
 	0xF0, 0x01, 0x81, 0x8F, 0x8F, 0x3E, 0x60,
@@ -23,7 +22,7 @@ void start_logo() {
 	uint8_t frame = 0;
 	do {
 		if(TV.millis() > nextmillis) {
-			nextmillis = TV.millis() + 20;
+			nextmillis += 15;
 			frame++;
 			if(frame < 8+8) {
 				TV.fill(BLACK);
@@ -49,7 +48,7 @@ void start_logo() {
 	TV.fill(BLACK);
 }
 
-void draw_sprite(uint8_t x, uint8_t y, uint8_t *sprite, uint8_t width, uint8_t height) {
+/*void draw_sprite(uint8_t x, uint8_t y, uint8_t *sprite, uint8_t width, uint8_t height) {
 	uint8_t offset = y*16+x;
 	for(; height != UINT8_MAX; height--) {
 		for(uint8_t xp = 0; xp < width; xp++) {
@@ -58,7 +57,7 @@ void draw_sprite(uint8_t x, uint8_t y, uint8_t *sprite, uint8_t width, uint8_t h
 		}
 		offset += 16;
 	}
-}
+}*/
 
 /*
 
@@ -114,6 +113,7 @@ const uint8_t PROGMEM level_tiles[] = {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2
 };
 
+// TODO (urgent!): update tileset, because with this one, all tiles are non-solid.
 const uint8_t PROGMEM tileset[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0xFF, 0x00, 0xFF, 0x00, 0x44, 0x00, 0x11, 0x00,
@@ -140,7 +140,7 @@ const uint8_t PROGMEM wizard_mask[] = {
 };
 
 const uint8_t jump[] = {
-	0, 11, 18, 23, 24
+	1, 5, 7, 11
 };
 
 /* scroll_x: between 0 and 8 (inclusive)
@@ -196,14 +196,14 @@ void draw_object(const uint8_t *object, const uint8_t *mask,
 	}
 }
 
-void shiftleft_bg_tiles(const uint8_t *nextcolumn) {
+void shiftleft_bg_tiles(const uint8_t **nextcolumn) {
 	for(uint8_t x = 0; x < 16; x++) {
 		for(uint8_t y = 0; y < 12; y++) {
 			bg_tiles[y*17+x] = bg_tiles[y*17+x+1];
 		}
 	}
 	for(uint8_t y = 0; y < 12; y++) {
-		bg_tiles[y*17+16] = pgm_read_byte(nextcolumn++);
+		bg_tiles[y*17+16] = pgm_read_byte((*nextcolumn)++);
 	}
 }
 
@@ -226,8 +226,7 @@ void scroll_level(uint8_t amount) {
 	level_scroll_x += amount;
 	while(level_scroll_x >= 8) {
 		level_scroll_x -= 8;
-		shiftleft_bg_tiles(level_scroll_data);
-		level_scroll_data += 12;
+		shiftleft_bg_tiles(&level_scroll_data);
 		row_counter++;
 	}
 }
@@ -236,8 +235,88 @@ uint8_t player_xpos;
 
 #define FLAG_COUNT_FRAMES 1
 #define FLAG_WAIT_BUTTONUP 2
+#define FLAG_PC_FALLING 4
+#define FLAG_PLAYER_INACTIVE 8
+#define FLAG_LEVEL_SCROLLS 16
 uint8_t flags = 0;
-uint8_t player_jump = 0, player_extra_y, player_y = 96-16;
+uint8_t player_jump = 0, player_xpos, player_ypos = 96-16, player_fall = 0;
+
+#define TOP_COLLISION 1
+#define RIGHT_COLLISION 2
+#define BOTTOM_COLLISION 4
+#define UNDER_COLLISION 8
+
+uint8_t bg_collisions() {
+	// which bg-tile is possibly colliding with the character?
+	// player_ypos = baseline of character (pixels from top)
+	// 16 = height of character (in pixels)
+	// player_xpos = left position of character (pixels from left)
+	// 8 = width of character (in pixels)
+	// level_scroll_x = amount of pixels scrolled to the left (i.e. 8-level_scroll_x pixels of the first column are visible)
+
+	//  v- first column (scrolled)
+	// ----+------++------++------+
+	//     |      ||      ||      |
+	//     |      ||      ||      |
+	//     |      ||      ||      |
+	// ----+------++------++------+
+	//     |      || v- player character
+	//     |   +------+   ||      |
+	//     |   |      |   ||      |
+	// ----+---|      |---++------+
+
+	// The player can be positioned in either one or two (like in the picture) columns
+	// collisions can occur
+	//  - while jumping (to the ceiling) -> collides with one / two of the tiles which are upmost covering the player
+	//  - while running (to the right) -> collides with 1-3 of the tiles covering the player on the right side
+	//  - while falling (to the bottom)
+	//    -> collides with one / two of the tiles which are most bottom covering the player
+	//    -> collides with the ground (line 96)
+	uint8_t collisions = 0;
+	uint8_t coll_tile = (player_ypos/8-2)*17+(player_xpos+level_scroll_x)/8;
+	uint8_t top_collision = bg_tiles[coll_tile];
+	uint8_t multitile = (player_xpos+level_scroll_x) % 8;
+	if(multitile) {
+		// also look for tile+1
+		coll_tile++;
+		top_collision |= bg_tiles[coll_tile];
+	}
+	uint8_t right_collision = bg_tiles[coll_tile];
+	coll_tile += 17;
+	right_collision |= bg_tiles[coll_tile];
+	if(player_ypos % 8) {
+		coll_tile += 17;
+		right_collision |= bg_tiles[coll_tile];
+	}
+	if(top_collision & 0x10) {
+		collisions |= TOP_COLLISION;
+	}
+	if(right_collision & 0x10) {
+		collisions |= RIGHT_COLLISION;
+	}
+	uint8_t bottom_collision = bg_tiles[coll_tile]
+	if(multitile) {
+		bottom_collision |= bg_tiles[--coll_tile];
+	}
+	if(bottom_collision & 0x10) {
+		collisions |= BOTTOM_COLLISION;
+	}
+	if(bottom_collision) {
+		flags &= ~FLAG_PC_FALLING;
+		player_ypos = ((player_ypos/8)-1)*8;
+		player_fall = 0;
+	}
+	coll_tile += 17;
+	bottom_collision = bg_tiles[coll_tile];
+	if(multitile) {
+		coll_tile++;
+		bottom_collision |= bg_tiles[coll_tile];
+	}
+	if(bottom_collision & 0x10) {
+		collisions |= UNDER_COLLISION;
+	}
+	return collisions;
+}
 
 int main() {
 	sound_init();
@@ -246,7 +325,11 @@ int main() {
 	DDRB |= (1 << PB4); // button input
 	PORTB |= (1 << PB4);
 
-	_delay_ms(200);
+	nextmillis = 200;
+	while(TV.millis() < nextmillis) {
+		// busy wait loop
+	}
+
 	//TV.draw_rect(0, 0, 127, 95, 1, -1);
 	//TV.select_font(font4x6);
 	//TV.print(2, 2, "Hello World!");
@@ -256,36 +339,57 @@ int main() {
 	frame_counter = 0;
 	flags |= FLAG_COUNT_FRAMES;
 	while(1) {
-		if(!(flags & FLAG_WAIT_BUTTONUP) && player_jump == 0 && !(PINB & (1 << PB4))) {
-			player_jump = 9;
+		uint8_t collisions;
+		if(!(flags & (FLAG_WAIT_BUTTONUP | FLAG_PC_FALLING)) && player_jump == 0 && !(PINB & (1 << PB4))) {
+			player_jump = 4;
 			flags |= FLAG_WAIT_BUTTONUP;
 		}
 		if((flags & FLAG_WAIT_BUTTONUP) && (PINB & (1 << PB4))) {
 			flags &= ~FLAG_WAIT_BUTTONUP;
 		}
-		if(player_jump > 4) {
-			//TODO: modify the jumping routine in a way that only the upwards part of the jump is relevant.
-			// the downwards part would be same as "falling" then, so the "falling routing" should take care of
-			player_extra_y = jump[9-player_jump];
-			// if collision (on head), set player_jump to 9(?)-player_jump and player_extra_y accordingly. else:
-			player_jump--;
-		} else if(player_jump > 0) {
-			player_extra_y = jump[player_jump];
-			if(0) { // if collision on bottom (inside a block...) set player_y accordingly and stop falling
+		if(player_jump > 0) {
+			player_ypos -= jump[--player_jump];
+			collisions = bg_collisions();
+			// if collision (on head), set player_jump to 0 and player_ypos accordingly. else:
+			if(collisions & TOP_COLLISION) {
 				player_jump = 0;
-				player_y = player_y - player_extra_y;
+				player_ypos = ((player_ypos/8)+1)*8;
+				// TODO: sound (ughh, hit a ceiling)
 			}
-			player_jump--;
 		} else {
-			player_extra_y = 0;
+			collisions = bg_collisions();
 		}
 		// check whether there is a solid tile under the character... if not, player has to fall and can not jump while this
+		if(collisions & UNDER_COLLISION) {
+			flags |= FLAG_PC_FALLING;
+			player_ypos += jump[player_fall];
+			if(player_fall < 3) {
+				player_fall++;
+			}
+			collisions = bg_collisions();
+		}
+		if(player_ypos > 96) {
+			player_ypos = 16;
+			// TODO: handle game over condition!
+		}
+		if(collisions & BOTTOM_COLLISION) {
+			player_ypos = ((player_ypos/8)-1)*8;
+			flags &= ~FLAG_PC_FALLING;
+			// player has landed
+		}
+		if(collisions & RIGHT_COLLISION) {
+			flags &= ~FLAG_LEVEL_SCROLLS;
+		} else {
+			flags |= FLAG_LEVEL_SCROLLS;
+		}
 		// if there is a collision with an enemy
 			// check whether the enemy is right under the character. if so, then hurt the enemy and let the player jump maybe
 			// else hurt the player
 		draw_bg(level_scroll_x);
 		if(row_counter < sizeof(level_tiles)/12-16) {
-			scroll_level(1);
+			if(flags & FLAG_LEVEL_SCROLLS) {
+				scroll_level(1);
+			}
 			player_xpos = 16;
 		} else if(player_xpos < 128-28) {
 			player_xpos++;
@@ -293,12 +397,14 @@ int main() {
 			flags &= ~FLAG_COUNT_FRAMES;
 			frame_counter = 0;
 		}
-		draw_object(wizard, wizard_mask, sizeof(wizard)/16, player_xpos, player_y-16-player_extra_y, 1, 2);
+		draw_object(wizard, wizard_mask, sizeof(wizard)/16, player_xpos, player_ypos-16, 1, 2);
 		if(flags & FLAG_COUNT_FRAMES) {
 			frame_counter++;
 		}
-		_delay_ms(15);
-		// do nothing;
+		nextmillis += 15;
+		while(TV.millis() < nextmillis) {
+			// busy wait loop
+		}
 	}
 
 	return 0;
