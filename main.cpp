@@ -78,7 +78,7 @@ B X X X X X X X X X X X X X X BF CB
 
 uint8_t bg_tiles[204];
 
-const uint8_t PROGMEM level_tiles[] = {
+const uint8_t PROGMEM tutorial_level[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x21,
 	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x21,
 	0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x21,
@@ -153,7 +153,7 @@ const uint8_t PROGMEM level_tiles[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x21,
 };
 
-const uint8_t PROGMEM castle_tiles[] = {
+const uint8_t PROGMEM castle_level[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x26, 0x27, 0x27, 0x27, 0x27, 0x27,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x26, 0x27, 0x27, 0x27, 0x27, 0x27,
 	0x00, 0x00, 0x18, 0x19, 0x00, 0x00, 0x26, 0x27, 0x27, 0x27, 0x27, 0x27,
@@ -342,6 +342,10 @@ const uint8_t PROGMEM dragon[] = {
 	0x04, 0x7F, 0xFF, 0xFF,
 };
 
+const uint8_t PROGMEM spider[] = {
+	0xD4, 0xA8, 0xC1, 0xAA, 0xD4, 0xA8, 0x81, 0x55,
+};
+
 const uint8_t PROGMEM logo[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
 	0x7C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
@@ -416,13 +420,13 @@ uint8_t frame_counter;
 void draw_object(const uint8_t *object, const uint8_t *mask,
 	const uint8_t number_frames, uint8_t xoff, uint8_t y,
 	uint8_t width, uint8_t height) {
-	uint8_t offset = (frame_counter % number_frames)*width*height*8;
-	uint8_t ymax = y + height*8;
+	uint8_t offset = (frame_counter % number_frames)*width*height;
+	uint8_t ymax = y + height;
 	for(; y < ymax; y++) {
 		uint8_t nextline, nextmaskline, line = 0, maskline = 0;
 		for(uint8_t x = 0; x < width; x++) {
 			nextline = pgm_read_byte(&object[offset]);
-			nextmaskline = pgm_read_byte(&mask[offset]);
+			nextmaskline = (mask == NULL ? 0 : pgm_read_byte(&mask[offset]));
 			if(xoff % 8 != 0) {
 				line |= (nextline >> (xoff % 8));
 				maskline |= (nextmaskline >> (xoff % 8));
@@ -460,8 +464,9 @@ uint8_t row_counter;
 #define FLAG_COUNT_FRAMES 1
 #define FLAG_WAIT_BUTTONUP 2
 #define FLAG_PC_FALLING 4
-#define FLAG_PLAYER_INACTIVE 8
+#define FLAG_INPUT_SEQUENCE 8
 #define FLAG_LEVEL_SCROLLS 16
+#define FLAG_GAME_PAUSED 32
 uint8_t flags = 0;
 uint8_t player_jump = 0, player_xpos, player_ypos, player_fall = 0;
 
@@ -563,8 +568,12 @@ uint8_t bg_collisions() {
 	return collisions;
 }
 
+const uint8_t *level_tiles[] = {tutorial_level, castle_level};
+const uint8_t level_widths[] = {72, 72};
+const uint8_t spiders_per_level[][3] = {{54}, {9, 36}};
+
 void start_screen() {
-	load_level(level_tiles);
+	load_level(level_tiles[0]);
 	bg_tiles[8*17+4] = 8; // 4,8: tile[8]
 	draw_bg(0);
 	draw_sprite(4, 2*8, logo, 9, 5*8); // 4,2: logo
@@ -584,6 +593,10 @@ void start_screen() {
 		while(TV.millis() < nextmillis) {
 			// busy wait loop
 		}
+	}
+	nextmillis = TV.millis() + 15;
+	while(TV.millis() < nextmillis) {
+		// busy wait loop
 	}
 }
 
@@ -612,6 +625,8 @@ void serialPrintNumber(uint16_t n) {
 	serialPrint("\r\n");
 }
 
+uint8_t current_level;
+
 int main() {
 	sound_init();
 	TV.begin(_PAL, 128, 96);
@@ -629,89 +644,207 @@ int main() {
 	//TV.print(2, 2, "Hello World!");
 
 	//boot_logo();
-	start_screen();
-	load_level(level_tiles);
-	frame_counter = 0;
-	flags |= FLAG_COUNT_FRAMES;
+	unsigned long lastpress;
+	uint8_t store_flags, input_seq = 0;
 	while(1) {
-		/*while(!(UCSR0A & (1 << RXC0))) {
-			// wait for one char
-		}
-		uint8_t input = UDR0;
-		serialPrint("PY=");serialPrintNumber(player_ypos);
-		serialPrint("PX=");serialPrintNumber(player_xpos);
-		serialPrint("PJ=");serialPrintNumber(player_jump);
-		serialPrint("PF=");serialPrintNumber(player_fall);*/
-		uint8_t collisions;
-		if(!(flags & (FLAG_WAIT_BUTTONUP | FLAG_PC_FALLING)) && player_jump == 0 && !(PINB & (1 << PB4))) {
-			player_jump = 6;
-			flags |= FLAG_WAIT_BUTTONUP;
-		}
-		if((flags & FLAG_WAIT_BUTTONUP) && (PINB & (1 << PB4))) {
-			flags &= ~FLAG_WAIT_BUTTONUP;
-		}
-		if(player_jump > 0) {
-			player_ypos -= jump[--player_jump];
-			collisions = bg_collisions();
-			// if collision (on head), set player_jump to 0 and player_ypos accordingly. else:
-			if(collisions & TOP_COLLISION) {
-				player_jump = 0;
-				player_ypos = ((player_ypos/8)+1)*8;
-				// TODO: sound (ughh, hit a ceiling)
-			}
-		} else {
-			collisions = bg_collisions();
-		}
-		if(collisions & RIGHT_COLLISION) {
-			flags &= ~FLAG_LEVEL_SCROLLS;
-		} else {
-			flags |= FLAG_LEVEL_SCROLLS;
-		}
-		//serialPrint("CO=");serialPrintNumber(collisions);
-		// check whether there is a solid tile under the character... if not, player has to fall and can not jump while this
-		if(!player_jump) {
-			if(!(collisions & BOTTOM_COLLISION)) {
-				flags |= FLAG_PC_FALLING;
-				player_ypos += jump[player_fall];
-				if(player_fall < 5) {
-					player_fall++;
-				}
-				if(bg_tiles[(player_ypos/8-1)*17+(player_xpos+level_scroll_x)/8] & 0x20 || ((player_xpos+level_scroll_x) % 8 && bg_tiles[(player_ypos/8-1)*17+(player_xpos+level_scroll_x)/8+1] & 0x20)) {
-					player_ypos -= (player_ypos%8)+8;
-				}
-				collisions = bg_collisions();
-			}
-			if(collisions & BOTTOM_COLLISION) {
-				flags &= ~FLAG_PC_FALLING;
-				player_fall = 0;
-			}
-		}
-		if(player_ypos > 96) {
-			player_ypos = 16;
-			// TODO: handle game over condition!
-		}
-		// if there is a collision with an enemy
-			// check whether the enemy is right under the character. if so, then hurt the enemy and let the player jump maybe
-			// else hurt the player
-		draw_bg(level_scroll_x);
-		if(row_counter < sizeof(level_tiles)/12-16) {
-			if(flags & FLAG_LEVEL_SCROLLS) {
-				scroll_level(1);
-			}
-			player_xpos = 16;
-		} else if(player_xpos < 128-28) {
-			player_xpos++;
-		} else {
-			flags &= ~FLAG_COUNT_FRAMES;
+		current_level = 0;
+		start_screen();
+		while(1) {
+			load_level(level_tiles[current_level]);
 			frame_counter = 0;
-		}
-		draw_object(wizard, wizard_mask, sizeof(wizard)/16, player_xpos, player_ypos-16, 1, 2);
-		if(flags & FLAG_COUNT_FRAMES) {
-			frame_counter++;
-		}
-		nextmillis = TV.millis() + 30;
-		while(TV.millis() < nextmillis) {
-			// busy wait loop
+			uint8_t spiders_in_level[3];
+			int8_t active_spider_positions[3], active_spider_direction[3];
+			for(uint8_t i = 0; i < 3; i++) {
+				spiders_in_level[i] = spiders_per_level[current_level][i];
+				active_spider_positions[i] = 0;
+			}
+			flags |= FLAG_COUNT_FRAMES;
+			while(1) {
+				/*while(!(UCSR0A & (1 << RXC0))) {
+					// wait for one char
+				}
+				uint8_t input = UDR0;
+				serialPrint("PY=");serialPrintNumber(player_ypos);
+				serialPrint("PX=");serialPrintNumber(player_xpos);
+				serialPrint("PJ=");serialPrintNumber(player_jump);
+				serialPrint("PF=");serialPrintNumber(player_fall);*/
+				if(!(flags & (FLAG_INPUT_SEQUENCE)) && !(PINB & (1 << PB4))) {
+					// input sequence started
+					store_flags = flags;
+					flags = FLAG_INPUT_SEQUENCE | FLAG_GAME_PAUSED;
+				}
+				if(flags & FLAG_INPUT_SEQUENCE) {
+					if(flags & FLAG_WAIT_BUTTONUP && (PINB & (1 << PB4))) {
+						input_seq <<= 2;
+						if(TV.millis() - lastpress < 200) {
+							input_seq |= 1;
+						} else {
+							input_seq |= 2;
+						}
+						flags &= ~FLAG_WAIT_BUTTONUP;
+						lastpress = TV.millis();
+					} else if(!(flags & FLAG_WAIT_BUTTONUP)) {
+						if(PINB & (1 << PB4)) {
+							// button up... check for how long
+							if(TV.millis() - lastpress > 150 || input_seq & 0xC0) {
+								flags = store_flags;
+								if(input_seq == 0x01) {
+									if(!(flags & FLAG_PC_FALLING) && player_jump == 0) {
+										player_jump = 6;
+									}
+								} else if(input_seq == 0xC1) {
+									// shoot!!
+								}
+								input_seq = 0;
+							}
+						} else {
+							lastpress = TV.millis();
+							flags |= FLAG_WAIT_BUTTONUP;
+						}
+					}
+				}
+				if(!(flags & FLAG_GAME_PAUSED)) {
+					uint8_t collisions;
+					if(player_jump > 0) {
+						player_ypos -= jump[--player_jump];
+						collisions = bg_collisions();
+						// if collision (on head), set player_jump to 0 and player_ypos accordingly. else:
+						if(collisions & TOP_COLLISION) {
+							player_jump = 0;
+							player_ypos = ((player_ypos/8)+1)*8;
+							// TODO: sound (ughh, hit a ceiling)
+						}
+					} else {
+						collisions = bg_collisions();
+					}
+					if(collisions & RIGHT_COLLISION) {
+						flags &= ~FLAG_LEVEL_SCROLLS;
+					} else {
+						flags |= FLAG_LEVEL_SCROLLS;
+					}
+					//serialPrint("CO=");serialPrintNumber(collisions);
+					// check whether there is a solid tile under the character... if not, player has to fall and can not jump while this
+					if(!player_jump) {
+						if(!(collisions & BOTTOM_COLLISION)) {
+							flags |= FLAG_PC_FALLING;
+							player_ypos += jump[player_fall];
+							if(player_fall < 5) {
+								player_fall++;
+							}
+							if(bg_tiles[(player_ypos/8-1)*17+(player_xpos+level_scroll_x)/8] & 0x20 || ((player_xpos+level_scroll_x) % 8 && bg_tiles[(player_ypos/8-1)*17+(player_xpos+level_scroll_x)/8+1] & 0x20)) {
+								player_ypos -= (player_ypos%8)+8;
+							}
+							collisions = bg_collisions();
+						}
+						if(collisions & BOTTOM_COLLISION) {
+							flags &= ~FLAG_PC_FALLING;
+							player_fall = 0;
+						}
+					}
+					if(player_ypos > 96) {
+						player_ypos = 16;
+					}
+					// if there is a collision with an enemy
+						// check whether the enemy is right under the character. if so, then hurt the enemy and let the player jump maybe
+						// else hurt the player
+					if(flags & FLAG_LEVEL_SCROLLS && level_scroll_x == 0) {
+						for(uint8_t i = 0; i < 3; i++) {
+							if(spiders_in_level[i] > 0)
+								spiders_in_level[i]--;
+						}
+					}
+					for(uint8_t i = 0; i < 3; i++) {
+						if(active_spider_positions[i] == 0 && spiders_in_level[i] <= 15 && spiders_in_level[i] > 0) {
+							active_spider_positions[i] = spiders_in_level[i]*8;
+							active_spider_direction[i] = -1;
+						}
+						if(active_spider_positions[i] >= player_xpos && active_spider_positions[i] <= player_xpos + 7 && player_ypos >= 76 && player_ypos < 80+16) {
+							/*if(flags & FLAG_PC_FALLING) {
+								active_spider_positions[i] = 0; // spider dead (sound)
+								spiders_in_level[i] = 0;
+							} else {*/
+							// game over!
+							current_level = -1;
+							break;
+							//}
+						}
+					}
+					if(current_level == 255) {
+						break;
+					}
+				}
+				draw_bg(level_scroll_x);
+				uint8_t draw_input_seq = input_seq, draw_pos = 4;
+				while(draw_input_seq != 0) {
+					switch(draw_input_seq & (0xC0)) {
+						case 0x40:
+							draw_sprite(draw_pos++, 24, tileset+96, 1, 8);
+							break;
+						case 0x80:
+							draw_sprite(draw_pos++, 24, tileset+104, 1, 8);
+							draw_sprite(draw_pos++, 24, tileset+120, 1, 8);
+							break;
+						default:
+							// nothing
+							break;
+					}
+					draw_input_seq <<= 2;
+				}
+				if(flags & FLAG_GAME_PAUSED) {
+					for(uint8_t i = 0; i < 3; i++) {
+						if(active_spider_positions[i] != 0) {
+							draw_object(spider, NULL, 2, active_spider_positions[i], 76, 1, 4);
+						}
+					}					
+				} else {
+					for(uint8_t i = 0; i < 3; i++) {
+						if(active_spider_positions[i] != 0) {
+							int8_t spider_walk = active_spider_direction[i] - (flags & FLAG_LEVEL_SCROLLS ? 1 : 0);
+							if(active_spider_positions[i] + spider_walk <= 0) {
+								active_spider_positions[i] = 0;
+								spiders_in_level[i] = 0;
+							} else {
+								active_spider_positions[i] += spider_walk;
+								if(bg_tiles[9*17+(active_spider_positions[i]+level_scroll_x)/8+(active_spider_direction[i]+1)/2] & 0x20) {
+									active_spider_positions[i] -= spider_walk;
+									active_spider_direction[i] = -active_spider_direction[i];
+								}
+								draw_object(spider, NULL, 2, active_spider_positions[i], 76, 1, 4);
+							}
+						}
+					}
+					if(row_counter < level_widths[current_level]-16) {
+						if(flags & FLAG_LEVEL_SCROLLS) {
+							scroll_level(1);
+						}
+						player_xpos = 16;
+					} else if(player_xpos < 128-28) {
+						player_xpos++;
+					} else {
+						flags &= ~FLAG_COUNT_FRAMES;
+						frame_counter = 0;
+						break;
+					}
+				}
+				draw_object(wizard, wizard_mask, sizeof(wizard)/16, player_xpos, player_ypos-16, 1, 16);
+				if(flags & FLAG_COUNT_FRAMES) {
+					frame_counter++;
+				}
+				nextmillis += 50;
+				while(TV.millis() < nextmillis) {
+					// busy wait loop
+				}
+			}
+			// TODO: level completed melody
+			nextmillis += 1000;
+			while(TV.millis() < nextmillis) {
+				// busy wait loop
+			}
+			if(current_level == 0) {
+				current_level++;
+			} else {
+				break;
+			}
 		}
 	}
 
