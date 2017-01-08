@@ -5,15 +5,15 @@ PROG_PORT=/dev/ttyUSB0
 
 TARGET=main.hex
 
-OBJ=TVout/video_gen.o TVout/TVout.o TVout/TVoutPrint.o sound.o
+OBJ=TVout/video_gen.o TVout/TVout.o TVout/TVoutPrint.o TVoutfonts/font8x8.o TVoutfonts/font4x6.o sound.o
 
 FORMAT=ihex
 OBJCOPY=avr-objcopy
 OBJSIZE=avr-size
 CC=avr-gcc
 CPP=avr-g++
-CPPFLAGS=-mmcu=$(MMCU) -I. -I TVout -gdwarf-2 -DF_CPU=$(F_CPU)UL -Os -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums -Wall -Wextra -pedantic -Wundef -Wundef -lm -ffunction-sections -fdata-sections -mstrict-X -maccumulate-args -Wl,--gc-sections -Wno-narrowing
-CFLAGS=-mmcu=$(MMCU) -I. -I TVout -gdwarf-2 -DF_CPU=$(F_CPU)UL -Os -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums -Wall -Wextra -pedantic -Wundef -std=gnu11 -Wundef -lm
+CPPFLAGS=-mmcu=$(MMCU) -I. -I TVout -I TVoutfonts -gdwarf-2 -DF_CPU=$(F_CPU)UL -Os -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums -Wall -Wextra -pedantic -Wundef -Wundef -lm -ffunction-sections -fdata-sections -mstrict-X -maccumulate-args -Wl,--gc-sections -Wno-narrowing
+CFLAGS=-mmcu=$(MMCU) -I. -I TVout -I TVoutfonts -gdwarf-2 -DF_CPU=$(F_CPU)UL -Os -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums -Wall -Wextra -pedantic -Wundef -std=gnu11 -Wundef -lm
 CFLAGS+=-ffunction-sections -fdata-sections -mstrict-X -maccumulate-args -Wl,--gc-sections
 
 all: $(TARGET)

@@ -1,5 +1,6 @@
 #include <TVout.h>
-//#include <font4x6.h>
+#include <font8x8.h>
+#include <font4x6.h>
 #include <avr/pgmspace.h>
 #include "sound.h"
 
@@ -338,8 +339,11 @@ const uint8_t PROGMEM dragon[] = {
 	0x0F, 0xE0, 0x88, 0x1A, 0x54, 0x08, 0x12, 0x18, 
 	0x04, 0x0F, 0xF9, 0x42, 0x00, 0x2D, 0x32, 0x00, 
 	0x19, 0x09, 0x00, 0x13, 0x05, 0x00, 0x0E, 0x03, 
-	0x7F, 0xFF, 0xFF, 0xD0, 0x10, 0x0A, 0x90, 0x28, 
-	0x04, 0x7F, 0xFF, 0xFF,
+	0x7F, 0xFF, 0xFF,
+	0xD0, 0x10, 0x0A,
+	0x90, 0x28, 0x04,
+	0x7F, 0xFF, 0xFF,
+	0xFF, 0x0A, 0x04, 0xFF,
 };
 
 const uint8_t PROGMEM spider[] = {
@@ -398,7 +402,7 @@ const uint8_t jump[] = {
    8 means, that the last tile is fully visible on the right side of the screen
    values in between mean, that parts of first and last row are visible */
 void draw_bg(uint8_t scroll_x) {
-	for(uint8_t y = 0; y < 12; y++) {
+	for(uint8_t y = 1; y < 12; y++) {
 		for(uint8_t i = 0; i < 8; i++) {
 			uint8_t line, nextline = pgm_read_byte(&tileset[bg_tiles[y*17]*8+i]);
 			for(uint8_t x = 0; x < 16; x++) {
@@ -425,18 +429,20 @@ void draw_object(const uint8_t *object, const uint8_t *mask,
 	for(; y < ymax; y++) {
 		uint8_t nextline, nextmaskline, line = 0, maskline = 0;
 		for(uint8_t x = 0; x < width; x++) {
-			nextline = pgm_read_byte(&object[offset]);
-			nextmaskline = (mask == NULL ? 0 : pgm_read_byte(&mask[offset]));
-			if(xoff % 8 != 0) {
-				line |= (nextline >> (xoff % 8));
-				maskline |= (nextmaskline >> (xoff % 8));
-				TV.screen[(y*16)+xoff/8+x] = (TV.screen[(y*16)+xoff/8+x] & ~maskline) | line;
-				line = (nextline << (8 - (xoff % 8)));
-				maskline = (nextmaskline << (8 - (xoff % 8)));
-			} else {
-				line = nextline;
-				maskline = nextmaskline;
-				TV.screen[(y*16)+xoff/8+x] = (TV.screen[(y*16)+xoff/8+x] & ~maskline) | line;
+			if(xoff + (x+1)*8 < 128) {
+				nextline = pgm_read_byte(&object[offset]);
+				nextmaskline = (mask == NULL ? 0xFF : pgm_read_byte(&mask[offset]));
+				if(xoff % 8 != 0) {
+					line |= (nextline >> (xoff % 8));
+					maskline |= (nextmaskline >> (xoff % 8));
+					TV.screen[(y*16)+xoff/8+x] = (TV.screen[(y*16)+xoff/8+x] & ~maskline) | line;
+					line = (nextline << (8 - (xoff % 8)));
+					maskline = (nextmaskline << (8 - (xoff % 8)));
+				} else {
+					line = nextline;
+					maskline = nextmaskline;
+					TV.screen[(y*16)+xoff/8+x] = (TV.screen[(y*16)+xoff/8+x] & ~maskline) | line;
+				}
 			}
 			offset++;
 		}
@@ -577,7 +583,7 @@ void start_screen() {
 	bg_tiles[8*17+4] = 8; // 4,8: tile[8]
 	draw_bg(0);
 	draw_sprite(4, 2*8, logo, 9, 5*8); // 4,2: logo
-	// 6,8: Text "START"
+	TV.print(6*8, 8*8, "START"); // 6,8: Text "START"
 	while(PINB & (1 << PB4)) {
 		nextmillis = TV.millis() + 15;
 		while(TV.millis() < nextmillis) {
@@ -587,7 +593,7 @@ void start_screen() {
 	bg_tiles[8*17+4] = 12;
 	draw_bg(0);
 	draw_sprite(4, 2*8, logo, 9, 5*8); // 4,2: logo
-	// 6,8: Text "START"
+	TV.print(6*8, 8*8, "START"); // 6,8: Text "START"
 	while(!(PINB & (1 << PB4))) {
 		nextmillis = TV.millis() + 15;
 		while(TV.millis() < nextmillis) {
@@ -627,6 +633,9 @@ void serialPrintNumber(uint16_t n) {
 
 uint8_t current_level;
 
+#define START_LEVEL 0
+#define FINAL_LEVEL 1
+
 int main() {
 	sound_init();
 	TV.begin(_PAL, 128, 96);
@@ -638,17 +647,21 @@ int main() {
 	while(TV.millis() < nextmillis) {
 		// busy wait loop
 	}
-
-	//TV.draw_rect(0, 0, 127, 95, 1, -1);
-	//TV.select_font(font4x6);
-	//TV.print(2, 2, "Hello World!");
-
-	//boot_logo();
+	boot_logo();
 	unsigned long lastpress;
 	uint8_t store_flags, input_seq = 0;
+	uint8_t shoot = 0;
+	uint8_t dragon_phallus_left;
+	uint8_t player_lives;
+	uint16_t score;
 	while(1) {
-		current_level = 0;
+		TV.select_font(font8x8);
+		dragon_phallus_left = 4;
+		player_lives = 6;
+		current_level = START_LEVEL;
+		score = 0;
 		start_screen();
+		TV.select_font(font4x6);
 		while(1) {
 			load_level(level_tiles[current_level]);
 			frame_counter = 0;
@@ -691,9 +704,12 @@ int main() {
 								if(input_seq == 0x01) {
 									if(!(flags & FLAG_PC_FALLING) && player_jump == 0) {
 										player_jump = 6;
+										play_note_ch1(34, 255, 100, -10, -2);
 									}
-								} else if(input_seq == 0xC1) {
+								} else if(input_seq == 0x09) {
 									// shoot!!
+									shoot = 1;
+									play_note_ch1(37, 255, 100, -20, 4);
 								}
 								input_seq = 0;
 							}
@@ -764,14 +780,19 @@ int main() {
 								spiders_in_level[i] = 0;
 							} else {*/
 							// game over!
-							current_level = -1;
-							break;
+							if(player_lives > 0) {
+								player_lives--;
+								play_note_ch1(20, 255, 100, -40, 8);
+							}
+							/*current_level = -1;
+							break;*/
 							//}
 						}
 					}
-					if(current_level == 255) {
+					// end boss damage?
+					/*if(current_level == 255) {
 						break;
-					}
+					}*/
 				}
 				draw_bg(level_scroll_x);
 				uint8_t draw_input_seq = input_seq, draw_pos = 4;
@@ -810,6 +831,13 @@ int main() {
 									active_spider_direction[i] = -active_spider_direction[i];
 								}
 								draw_object(spider, NULL, 2, active_spider_positions[i], 76, 1, 4);
+								if(shoot) {
+									shoot--;
+									TV.draw_line(player_xpos + 7, player_ypos - 10, active_spider_positions[i] + 1, 78, 1); // pew
+									active_spider_positions[i] = 0;
+									spiders_in_level[i] = 0;
+									score += 100;
+								}
 							}
 						}
 					}
@@ -819,16 +847,74 @@ int main() {
 						}
 						player_xpos = 16;
 					} else if(player_xpos < 128-28) {
-						player_xpos++;
+						if(current_level == FINAL_LEVEL) {
+							if(!dragon_phallus_left || player_xpos < (10-dragon_phallus_left)*8) {
+								player_xpos++;
+							} else {
+								// hurt! sound
+								if(player_lives > 0) {
+									player_lives--;
+									play_note_ch1(20, 255, 100, -40, 8);
+								}
+							}
+						} else {
+							player_xpos++;
+						}
 					} else {
 						flags &= ~FLAG_COUNT_FRAMES;
 						frame_counter = 0;
 						break;
 					}
 				}
+				if(current_level == FINAL_LEVEL && row_counter >= 65-16) {
+					if(dragon_phallus_left) {
+						uint8_t dragon_x = 128-(row_counter-65+16)*8-level_scroll_x;
+						if(shoot > 0) {
+							TV.draw_line(player_xpos + 7, player_ypos - 10, dragon_x-(dragon_phallus_left-1)*8, 73, 1);
+							shoot--;
+							score += 1000;
+							dragon_phallus_left--;
+						}
+						if(dragon_phallus_left > 1 && dragon_x-(dragon_phallus_left-1)*8 < 128) {
+							draw_object(dragon+192, NULL, 1, dragon_x-(dragon_phallus_left-1)*8, 9*8, 3, 4);
+						}
+						draw_object(dragon, NULL, 2, dragon_x, 6*8, 3, 4*8);
+						if(dragon_phallus_left > 1) {
+							draw_object(dragon+204, NULL, 1, dragon_x, 9*8, 1, 4);
+						}
+					}
+					if(!dragon_phallus_left && row_counter >= 72-16) {
+						// won!
+						bg_tiles[13+17*8] = 0x2E;
+						bg_tiles[14+17*8] = 0x3E;
+						bg_tiles[13+17*9] = 0x2F;
+						bg_tiles[14+17*9] = 0x3F;
+					}
+				}
 				draw_object(wizard, wizard_mask, sizeof(wizard)/16, player_xpos, player_ypos-16, 1, 16);
 				if(flags & FLAG_COUNT_FRAMES) {
 					frame_counter++;
+				}
+				if(player_lives == 0) {
+					current_level = -1;
+					break;
+				}
+				while(shoot) {
+					TV.draw_line(player_xpos + 7, player_ypos - 10, rand() % 128, rand() % 96, 1); // pew
+					shoot--;
+				}
+				for(uint8_t i = 0; i < 16*8; i++) {
+					TV.screen[i] = 0;
+				}
+				TV.print(0, 0, "Score:");
+				TV.print(7*4, 0, score);
+				TV.print(128-(8*4+3*8), 0, "Health:");
+				uint8_t draw_lives = player_lives;
+				for(uint8_t i = 0; i < 3; i++) {
+					uint8_t max_lives = draw_lives;
+					if(max_lives > 2) max_lives = 2;
+					draw_sprite(16-(3-i), 0, tileset+(0x1E - max_lives)*8, 1, 8);
+					draw_lives -= max_lives;
 				}
 				nextmillis += 50;
 				while(TV.millis() < nextmillis) {
@@ -836,11 +922,28 @@ int main() {
 				}
 			}
 			// TODO: level completed melody
-			nextmillis += 1000;
+			score += 5000;
+			play_note_ch1(0, 255, 100, -20, 0);
+			nextmillis += 100;
 			while(TV.millis() < nextmillis) {
 				// busy wait loop
 			}
-			if(current_level == 0) {
+			play_note_ch1(4, 255, 100, -20, 0);
+			nextmillis += 100;
+			while(TV.millis() < nextmillis) {
+				// busy wait loop
+			}
+			play_note_ch1(7, 255, 100, -20, 0);
+			nextmillis += 100;
+			while(TV.millis() < nextmillis) {
+				// busy wait loop
+			}
+			play_note_ch1(12, 255, 100, -20, 0);
+			nextmillis += 700;
+			while(TV.millis() < nextmillis) {
+				// busy wait loop
+			}
+			if(current_level < FINAL_LEVEL) {
 				current_level++;
 			} else {
 				break;
