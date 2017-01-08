@@ -386,7 +386,7 @@ const uint8_t PROGMEM logo[] = {
 };
 
 const uint8_t jump[] = {
-	1, 5, 7, 11
+	1, 2, 4, 7, 7, 7
 };
 
 /* scroll_x: between 0 and 8 (inclusive)
@@ -468,7 +468,6 @@ uint8_t player_jump = 0, player_xpos, player_ypos, player_fall = 0;
 #define TOP_COLLISION 1
 #define RIGHT_COLLISION 2
 #define BOTTOM_COLLISION 4
-#define UNDER_COLLISION 8
 
 void load_level(const uint8_t *level) {
 	level_scroll_data = level;
@@ -498,8 +497,6 @@ void scroll_level(uint8_t amount) {
 	}
 }
 
-uint8_t oldcoll_tile = 0, oldcoll_tile2 = 0;
-
 uint8_t bg_collisions() {
 	// which bg-tile is possibly colliding with the character?
 	// player_ypos = baseline of character (pixels from top)
@@ -527,53 +524,41 @@ uint8_t bg_collisions() {
 	//    -> collides with one / two of the tiles which are most bottom covering the player
 	//    -> collides with the ground (line 96)
 	uint8_t collisions = 0;
-	bg_tiles[oldcoll_tile] = 0x00;
 	uint8_t coll_tile = (player_ypos/8-3)*17+(player_xpos+level_scroll_x)/8;
-	oldcoll_tile = coll_tile;
-	bg_tiles[coll_tile] = 0x17;
 	uint8_t top_collision = 0;
-	uint8_t multitile = (player_xpos+level_scroll_x) % 8;
-	if(multitile) {
-		bg_tiles[oldcoll_tile2] = 0x00;
-		oldcoll_tile2 = coll_tile+1;
-		bg_tiles[coll_tile+1] = 0x17;
-	}
+	uint8_t multitile = (player_xpos+level_scroll_x) % 8 ? 1 : 0;
 	if(player_ypos % 8 == 1) {
 		top_collision |= bg_tiles[coll_tile];
-		if(multitile) {
-			// also look for tile+1
-			coll_tile++;
-			top_collision |= bg_tiles[coll_tile];
-		}
 	}
-	uint8_t right_collision = bg_tiles[coll_tile];
 	coll_tile += 17;
-	right_collision |= bg_tiles[coll_tile];
-	if(player_ypos % 8) {
-		coll_tile += 17;
-		right_collision |= bg_tiles[coll_tile];
-	}
 	if(top_collision & 0x20) {
 		collisions |= TOP_COLLISION;
+	}
+
+	uint8_t right_collision = 0;
+	if((player_xpos+level_scroll_x)%8 == 0) {
+		right_collision |= bg_tiles[coll_tile+1+multitile] | bg_tiles[coll_tile+17+1+multitile];
+		if(player_ypos % 8) {
+			right_collision |= bg_tiles[coll_tile+2*17+1+multitile];
+		}
 	}
 	if(right_collision & 0x20) {
 		collisions |= RIGHT_COLLISION;
 	}
-	uint8_t bottom_collision = bg_tiles[coll_tile];
-	if(multitile) {
-		bottom_collision |= bg_tiles[--coll_tile];
+
+	coll_tile += 2*17;
+	if(player_ypos % 8) {
+		coll_tile += 17;
 	}
-	if(bottom_collision & 0x20) {
-		collisions |= BOTTOM_COLLISION;
-	}
-	coll_tile += 17;
-	bottom_collision = bg_tiles[coll_tile];
-	if(multitile) {
-		coll_tile++;
+	uint8_t bottom_collision = 0;
+	if(player_ypos % 8 == 0) {
 		bottom_collision |= bg_tiles[coll_tile];
-	}
-	if(bottom_collision & 0x20) {
-		collisions |= UNDER_COLLISION;
+		if(multitile) {
+			bottom_collision |= bg_tiles[coll_tile+1];
+		}
+		if(bottom_collision & 0x20) {
+			collisions |= BOTTOM_COLLISION;
+		}
 	}
 	return collisions;
 }
@@ -643,23 +628,23 @@ int main() {
 	//TV.select_font(font4x6);
 	//TV.print(2, 2, "Hello World!");
 
-	boot_logo();
+	//boot_logo();
 	start_screen();
 	load_level(level_tiles);
 	frame_counter = 0;
 	flags |= FLAG_COUNT_FRAMES;
 	while(1) {
-		while(!(UCSR0A & (1 << RXC0))) {
+		/*while(!(UCSR0A & (1 << RXC0))) {
 			// wait for one char
 		}
 		uint8_t input = UDR0;
 		serialPrint("PY=");serialPrintNumber(player_ypos);
 		serialPrint("PX=");serialPrintNumber(player_xpos);
 		serialPrint("PJ=");serialPrintNumber(player_jump);
-		serialPrint("PF=");serialPrintNumber(player_fall);
+		serialPrint("PF=");serialPrintNumber(player_fall);*/
 		uint8_t collisions;
 		if(!(flags & (FLAG_WAIT_BUTTONUP | FLAG_PC_FALLING)) && player_jump == 0 && !(PINB & (1 << PB4))) {
-			player_jump = 4;
+			player_jump = 6;
 			flags |= FLAG_WAIT_BUTTONUP;
 		}
 		if((flags & FLAG_WAIT_BUTTONUP) && (PINB & (1 << PB4))) {
@@ -677,22 +662,29 @@ int main() {
 		} else {
 			collisions = bg_collisions();
 		}
-		serialPrint("CO=");serialPrintNumber(collisions);
-		// check whether there is a solid tile under the character... if not, player has to fall and can not jump while this
-		if(collisions & BOTTOM_COLLISION) {
-			player_ypos = ((player_ypos/8)-1)*8;
-			collisions = bg_collisions();
-		}
-		if(!(collisions & UNDER_COLLISION)) {
-			flags |= FLAG_PC_FALLING;
-			player_ypos += jump[player_fall];
-			if(player_fall < 3) {
-				player_fall++;
-			}
-			collisions = bg_collisions();
+		if(collisions & RIGHT_COLLISION) {
+			flags &= ~FLAG_LEVEL_SCROLLS;
 		} else {
-			flags &= ~FLAG_PC_FALLING;
-			player_fall = 0;
+			flags |= FLAG_LEVEL_SCROLLS;
+		}
+		//serialPrint("CO=");serialPrintNumber(collisions);
+		// check whether there is a solid tile under the character... if not, player has to fall and can not jump while this
+		if(!player_jump) {
+			if(!(collisions & BOTTOM_COLLISION)) {
+				flags |= FLAG_PC_FALLING;
+				player_ypos += jump[player_fall];
+				if(player_fall < 5) {
+					player_fall++;
+				}
+				if(bg_tiles[(player_ypos/8-1)*17+(player_xpos+level_scroll_x)/8] & 0x20 || ((player_xpos+level_scroll_x) % 8 && bg_tiles[(player_ypos/8-1)*17+(player_xpos+level_scroll_x)/8+1] & 0x20)) {
+					player_ypos -= (player_ypos%8)+8;
+				}
+				collisions = bg_collisions();
+			}
+			if(collisions & BOTTOM_COLLISION) {
+				flags &= ~FLAG_PC_FALLING;
+				player_fall = 0;
+			}
 		}
 		if(player_ypos > 96) {
 			player_ypos = 16;
@@ -701,11 +693,6 @@ int main() {
 		// if there is a collision with an enemy
 			// check whether the enemy is right under the character. if so, then hurt the enemy and let the player jump maybe
 			// else hurt the player
-		if(collisions & RIGHT_COLLISION) {
-			flags &= ~FLAG_LEVEL_SCROLLS;
-		} else {
-			flags |= FLAG_LEVEL_SCROLLS;
-		}
 		draw_bg(level_scroll_x);
 		if(row_counter < sizeof(level_tiles)/12-16) {
 			if(flags & FLAG_LEVEL_SCROLLS) {
@@ -722,7 +709,7 @@ int main() {
 		if(flags & FLAG_COUNT_FRAMES) {
 			frame_counter++;
 		}
-		nextmillis = TV.millis() + 15;
+		nextmillis = TV.millis() + 30;
 		while(TV.millis() < nextmillis) {
 			// busy wait loop
 		}
