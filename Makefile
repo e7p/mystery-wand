@@ -5,7 +5,8 @@ PROG_PORT=/dev/ttyUSB0
 
 TARGET=main.hex
 
-OBJ=TVout/video_gen.o TVout/TVout.o TVout/TVoutPrint.o TVoutfonts/font8x8.o TVoutfonts/font4x6.o sound.o
+OBJ=TVout/video_gen.o TVout/TVout.o TVout/TVoutPrint.o TVoutfonts/font8x8.o TVoutfonts/font4x6.o
+OBJ+=sound.o gfx.o bootlogo.o levels.o
 
 FORMAT=ihex
 OBJCOPY=avr-objcopy
